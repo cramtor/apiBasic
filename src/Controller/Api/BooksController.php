@@ -3,21 +3,12 @@
 namespace App\Controller\Api;
 
 use App\Repository\BookRepository;
-use Doctrine\ORM\EntityManager;
-use Doctrine\ORM\EntityManagerInterface;
 use FOS\RestBundle\Controller\AbstractFOSRestController;
 use FOS\RestBundle\Controller\Annotations as Rest;
 use Symfony\Component\HttpFoundation\Request;
-use App\Entity\Book;
-use App\Entity\Category;
-use App\Form\Model\BookDto;
-use App\Form\Model\CategoryDto;
-use App\Form\Type\BookFormType;
-use App\Repository\CategoryRepository;
-use App\Service\Book\BookFormProcessor;
-use App\Service\FileUploader;
-use Doctrine\Common\Collections\ArrayCollection;
-use League\Flysystem\FilesystemOperator;
+use App\Service\BookFormProcessor as ServiceBookFormProcessor;
+use App\Service\BookManager;
+use FOS\RestBundle\View\View;
 use Symfony\Component\HttpFoundation\Response;
 
 class BooksController extends AbstractFOSRestController
@@ -26,8 +17,8 @@ class BooksController extends AbstractFOSRestController
     * @Rest\Get(path="/books")
     * @Rest\View(serializerGroups={"book"}, serializerEnableMaxDepthChecks= true)
     */
-    public function getAction(BookRepository $bookRepo){
-        return $bookRepo->findAll();
+    public function getAction(BookManager $bookRepo){
+        return $bookRepo->getRepository()->findAll();
     }
 
     /**
@@ -35,31 +26,15 @@ class BooksController extends AbstractFOSRestController
     * @Rest\View(serializerGroups={"book"}, serializerEnableMaxDepthChecks= true)
     */
     public function postAction(
-        EntityManagerInterface $em,
-        FilesystemOperator $defaultStorage,
-        FileUploader $fileUploader,
-        Request $request
+        ServiceBookFormProcessor $bookForm,
+        Request $request,
+        BookManager $bookManager
     ) {
-        $bookDto = new BookDto();
-        $form = $this->createForm(BookFormType::class, $bookDto);        
-        $form->handleRequest($request);
-        if (!$form->isSubmitted())
-        {
-            return new Response('', Response::HTTP_BAD_REQUEST);
-        }
-        if( $form->isValid()){
-            $book = new Book();
-           /* if($bookDto->base64Image)
-            {
-                $filename = $fileuploader->uploadBase64File($bookDto->base64Image);
-                $book->setImage($fileName);
-            } */     
-            $book->setTitle($bookDto->title);
-            $em->persist($book);
-            $em->flush(); 
-            return $book;           
-        }
-        return $form;
+        $book = $bookManager->create();
+        [$book,$error] = ($bookForm)($book, $request);
+        $statusCode = $book ? Response::HTTP_CREATED : Response::HTTP_BAD_REQUEST;
+        $data = $book ?? $error;
+        return  View::create($data, $statusCode);
     }
 
     /**
@@ -68,34 +43,40 @@ class BooksController extends AbstractFOSRestController
     */
     public function editAction(
         int $id,        
-        BookRepository $bookRepository,        
-        Request $request,
-        EntityManagerInterface $em,
-        CategoryRepository $categoryRepository,
-        FileUploader $fileUploader
+        BookManager $bookManager,  
+        ServiceBookFormProcessor $bookForm,     
+        Request $request
     )
-    {
-        //ToDo: take the form without this
-        $book = $bookRepository->find($id); 
-                       
+    {        
+        $book = $bookManager->find($id);
+
         if(!$book) {
-            return [null, 'not found'];
+            return View::create('Book not found', Response::HTTP_NOT_FOUND);
         }
-        $bookDto = BookDto::createFromBook($book);
-        //
-        $form = $this->createForm(BookFormType::class, $bookDto);
-        $form->handleRequest($request);
-        if (!$form->isSubmitted()){
-            return new Response('', Response::HTTP_BAD_REQUEST);
-        }
-        if ($form->isValid()) {
-
-        $bookFormProcessor = new BookFormProcessor();
-        $book = $bookFormProcessor->processBook($request,$bookRepository,$em,$categoryRepository,$id);
-        
-        return $book;
-
-        }
-        
+        [$book,$error] = ($bookForm)($book,$request);
+        $statusCode = $book ? Response::HTTP_CREATED : Response::HTTP_BAD_REQUEST;
+        $data = $book ?? $error;
+        return  View::create($data, $statusCode);
     }
+
+        /**
+    * @Rest\Delete(path="/books/{id}", requirements={"id"="\d+"})
+    * @Rest\View(serializerGroups={"book"}, serializerEnableMaxDepthChecks= true)
+    */
+    public function deleteAction(
+        int $id,        
+        BookManager $bookManager,     
+        Request $request
+    )
+    {        
+        $book = $bookManager->find($id);
+
+        if(!$book) {
+            return View::create('Book not found', Response::HTTP_NOT_FOUND);
+        }
+        $bookManager->delete($book);
+        return View::create(null, Response::HTTP_NO_CONTENT);
+    }
+        
+    
 }
